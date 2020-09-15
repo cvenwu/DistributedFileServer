@@ -75,7 +75,10 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		newFile.Seek(0, 0)
 		fileMeta.FileSha1 = util.FileSha1(newFile)
 		log.Println("上传文件的sha1值为-------------------->", fileMeta.FileSha1)
-		meta.UpdateFileMeta(fileMeta)
+
+		//meta.UpdateFileMeta(fileMeta)
+		meta.UpdateFileMetaDB(fileMeta)
+
 		log.Println("------------------------上传文件成功---------------------------")
 		//可以向用户返回一个成功的信息或页面
 		http.Redirect(w, r, "/file/upload/suc", http.StatusFound)
@@ -100,7 +103,12 @@ func GetFileMetaHandler(w http.ResponseWriter, r *http.Request) {
 	//r.Form["filehash"]返回的是一个数组，默认是取第1个
 	filehash := r.Form["filehash"][0]
 	//通过客户上传的filehash来获取对应文件的信息
-	fmeta := meta.GetFileMeta(filehash)
+	//fmeta := meta.GetFileMeta(filehash)
+	fmeta, err := meta.GetFileMetaDB(filehash)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
 	//自己在这里加的代码，
 	//说明没有找到对应的文件

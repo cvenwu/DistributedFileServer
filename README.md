@@ -174,3 +174,120 @@ nginx再做一次静态资源访问将文件download下来，一些限流以及�
 4. 文件修改(post)(只是修改了map中的映射文件名，实际上物理存储的文件名没修改)：http://localhost:8080/file/update?op=0&filehash=文件的sha1值&filename=新文件名(如111.png)
 5. 文件删除(get)：http://localhost:8080/file/delete?filehash=文件sha1值
 6. 文件下载(get)：http://localhost:8080/file/download?filehash=文件sha1值
+
+
+## 第3章
+
+
+### 3-1 本章介绍以及mysql的主从复制架构
+之前存储的文件元信息都存储在内存中，一旦遇到特殊情况就会丢失，因此我们这里使用mysql(为啥不使用mongodb呢，其实都可以，但是选择最适合自己的即可)
+
+相比于之前的架构图，我们加入了mysql之后的架构图，如图所示：![6kS7BR](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/6kS7BR.png)
+
+
+单点模式：一旦mysql进程挂掉整个数据库服务就会被强制终止，因此我们需要更稳定的架构
+主从模式：一个主节点(master)，多个从节点(slave)组成的数据库集群。主从架构的原理图如图所示：![IBTDmR](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/IBTDmR.png)
+
+图中的集群是一个master节点和一个slave节点，工作原理如下：
+1. master的mysql实例所有的增删改查所有操作都会写入到bin log的日志文件中
+2. slave节点的mysql会启动一个io线程实时读取master的bin log会将其同步到relay log日志文件中，同时mysql会另外启动一个sql线程来专门读取relay log日志并将所有操作重放一遍。
+3. 最终实现的效果就是在master发生的所有数据修改过程都会按序在slave节点重放一遍，这样保持了两个节点的数据一致性，并且如果从节点有多个的时候也会类似这样的流程保持一致性。一旦主节点挂掉，从节点还可以提供读数据的服务，留出宝贵的时间启动主服务或者将从节点切换成主节点。
+
+多主模式：比主从更强大的架构。服务部署在不同地区的机房里面，每个机房都运行数据库服务，并且要求每个机房的数据库都可以读写，并且要数据同步。这时就可以使用多主模式。
+
+
+### 3-2 实操快速部署一个mysql主从模式
+
+为了更方便的演示在本机上通过docker启动两个mysql容器 `sudo docker ps`查看容器
+![MzkRqN](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/MzkRqN.png)
+
+
+【推荐】自己百度到的资料：如何通过docker搭建一个mysql主从架构的集群(http://www.fall.ink/post/22)
+
+【推荐】推荐自己去查看一下docker的命令[菜鸟教程](https://www.runoob.com/docker/docker-rm-command.html)
+
+如何搭建一个主从架构的集群
+1. 登录docker中两个mysql的节点 `mysql -uroot -h127.0.0.1 -P端口号 - p` 之后输入密码，(因为两个docker镜像中的mysql只是映射到本机的端口不同，所以要指定对应的mysql端口号)
+2. 假设做成主节点的mysql(假设为master)控制台，要做成从节点的mysql(假设为slave)控制台，
+3. 找到将要做成主节点的binlog信息，`show master status;`
+4. 回到从节点，配置一下master的信息，也就是告诉从节点将要从哪里读取master的binlog 。最后一个参数(MASTER_LOG_POS)指定从哪里开始复制，为0表示从日志最开始的地方进行复制 `change master to MASTER_HOST='master的ip地址',MASTER_USER='主master的实例的用户名(自己要提前建)',MASTER_PASSWORD='对应实例的用户名的密码',MASTER_LOG_FILE='填上刚才在master节点执行show master status结果的File对应的值',MASTER_LOG_POS=0;`
+5. 在从节点上执行`start slave;` 并执行`show slave status\G;` 
+6. 从节点上查看 ![piaO8j](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/piaO8j.png)
+7. 测试一下主从数据的同步，
+    7.1 首先在master上创建一个数据库，![4DevYp](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/4DevYp.png) 此时切换到从节点，我们使用`show databases;`查看从节点是否有对应的数据库
+    7.2 切换到master，创建一张数据表，![oItkNy](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/oItkNy.png) 之后去从节点上看一下是否有对应的数据表
+    7.3 切换到master，向表中插入数据，![RHsZjc](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/RHsZjc.png)，之后去slave查看一下对应表是否有数据
+    7.4 首先去从节点查看一下游标的位置`show slave status\G;`，![D4qZrL](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/D4qZrL.png)去master查看一下binlog中游标的位置，![j300Xq](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/j300Xq.png)发现与我们的从节点的master的位置一样
+8. 
+
+
+
+
+### 3-3 文件表的设计以及创建
+
+我们删除记录并不是真正的删除，而是加入一个标记字段，避免物理操作误删除，以及可以通过修改该字段的值来修改，同时可以减少删除造成的数据库文件的空洞和碎片，
+
+0. 创建一个数据库叫做`create database fileserver default character set utf8;`
+1. 按照这个sql文件创建数据表：![at1zrj](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/at1zrj.png) ,status列标识文件的状态
+    1.1 延伸：一个表中的数据量太大的时候我们需要进行分库分表，分表有水平分表和垂直分表，垂直分表（将一个表分成多个表，例如一个表的有16列，
+                将第1个表设计为9列，第2个表设计为9列，因为这两个表都是有通用的一列来进行连接，也就是一条记录一刀切成两半，这两个表通过唯一键进行关联）是把不同字段切分开来 
+          水平分表意思就是每个表的结构一样，无非不过就是将其中一个表的数据切开放到多个表中进行放置。
+    1.2 这里以水平分表为例，因为filesha1的值后两位都是16进制，所以一共有16*16种可能也就是256个表，如图所示：![5S9at9](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/5S9at9.png)
+    1.3 如果一个文件的一个filesha值以ff结尾那么将会被存放到`tbl_ff`这个表中，如果一个文件表的filesha1值的后两位作为表的区分，256张表有一个公共的前缀tbl_。
+    1.4 优点：水平分表(横着将表分成两个部分)的方式非常简单，只是根据一个规则 缺点：如果基于原来的分表进行拓展则需要改变这个规则，此时需要移动数据到对应的表中，比较繁琐。
+    
+    
+作者设计的表的结构 
+```sql
+CREATE TABLE `tbl_file` ( `id` int(11) not null auto_increment, `file_sha1` CHAR(40) not null DEFAULT '' COMMENT 'hash', `file_name`VARCHAR(256) not null DEFAULT '' COMMENT '', `file_size` BIGINT(20) DEFAULT '0' COMMENT '',
+`file_addr` VARCHAR(1024) not null default '' comment '', `create_at` datetime default NOW() comment '', `update_at`datetime default NOW() on update CURRENT_TIMESTAMP() COMMENT '', `status` int(11) not null DEFAULT '0' COMMENT '(//)', `ext1` int(11) DEFAULT '0' COMMENT '1', `ext2` text comment '2', PRIMARY KEY (`id`), unique key `idx_file_hash` (`file_sha1`), key `idx_status` (`status`) ) ENGINE=INNODB DEFAULT CHARSET=utf8;
+```
+
+### 3-4 持久化元数据到数据库中
+
+步骤
+1. 在项目目录下新建一个db目录，同时在db目录下新建一个mysql子文件夹，专门用于创建mysql连接的，新建一个文件conn.go在mysql文件夹下，
+    1.1 在该文件下init函数下进行数据库的连接，并且提供一个方法用于返回创建的数据库连接的方法
+    1.2 同时在db目录下新建一个file.go文件，新建一个向数据库插入(使用了`insert into`语句)记录的函数（通过预编译操作，避免sql注入），也就是文件上传成功之后将文件信息插入到数据库中。
+2. 在db.go定义一个全局变量初始化数据库连接以及设置
+3. 在file.go新建一个函数来告诉我们上传文件成功的时候应该要干些什么，
+
+
+关于insert into语句与insert语句的区别请参考：[insert](https://blog.csdn.net/qq_30715329/article/details/79363761)
+
+
+### 3-5 从文件表获取元数据
+
+
+1. 在filemeta.go新建一个函数，在update文件元信息的时候， 直接写入到mysql的表中。
+2. 在handler文件中，修改之前的uploadFileMeta将`meta.UpdateFileMeta(fileMeta)`修改为`meta.UpdateFileMetaDB(fileMeta)`
+3. 在file.go的文件中，增加一个接口用于 ：查询(修改文件的元信息)接口，同时为了返回的数据我们还新建了一个tbfile结构体。
+4. 在filemeta.go文件中，新建一个GetFileMetaDB() 用于从数据库查询文件的元信息并且返回，
+5. 修改handler.go中的GetFileMetaHandler() 将`fmeta := meta.GetFileMeta(filehash)`修改为`fmeta, err := meta.GetFileMetaDB(filehash)
+                                                                                	if err != nil {
+                                                                                		w.WriteHeader(http.StatusInternalServerError)
+                                                                                		return
+                                                                                	}`
+
+### 本章小结
+
+![nXs1IU](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/nXs1IU.png)
+
+在完成对数据库文件表的插入以及查询操作之后，做一个使用mysql的小结
+1. 通过官方提供的sql.DB来管理数据库连接对象
+2. 通过sql.Open()方法来创建协程安全的sql.DB对象，不需要频繁调用open以及close方法
+3. 优先使用prepared statement 来进行预编译防止sql的注入攻击，比手动拼接的字符串更有效
+
+本章小结：![Yy09Rm](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/Yy09Rm.png)
+1. 讲了mysql的特点应用场景，为啥在项目中选择mysql以及本项目使用Mysql的好处
+2. 讲了主从架构的工作原理以及从实际操作情况下搭建一个主从架构，同时基于当前文件上传做了一个文件表的创建
+3. 通过golang访问mysql进行插入和查询
+
+
+### 第3章自己实践
+1. 目前批量查询还是从内存中查询，无法从数据库中读取数据，需要进一步的优化
+2. 自己有一个疑问就是为啥修改文件元信息的时候我们参数从get方法中获取，但是又要判断如果请求的方法不是post将会返回一个服务器内部错误呢？
+
+## 额外阅读和补充
+1. 【推荐】自己百度到的资料：如何通过docker搭建一个mysql主从架构的集群(http://www.fall.ink/post/22)
+2. 【推荐】推荐自己去查看一下docker的命令[菜鸟教程](https://www.runoob.com/docker/docker-rm-command.html)

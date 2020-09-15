@@ -1,6 +1,10 @@
 package meta
 
-import "sort"
+import (
+	"fileSystem/db"
+	"log"
+	"sort"
+)
 
 /**
  * @Author: yirufeng
@@ -38,6 +42,13 @@ func UpdateFileMeta(fmeta FileMeta) {
 	fileMetas[fmeta.FileSha1] = fmeta
 }
 
+//修改的时候直接写到mysql的表中
+//该方法作用：新增/更新文件元信息到数据库
+func UpdateFileMetaDB(fmeta FileMeta) bool {
+	log.Println("上传文件同步到数据库开始----------------", fmeta)
+	return mydb.OnFileUploadFinished(fmeta.FileSha1, fmeta.FileName, fmeta.FileSize, fmeta.Location)
+}
+
 //获取文件元信息：通过sha1值获取文件元信息对象
 func GetFileMeta(fileSha1 string) FileMeta {
 	return fileMetas[fileSha1]
@@ -58,6 +69,25 @@ func GetLastFileMetas(count int) []FileMeta {
 		return fMetaArray[0:len(fMetaArray)]
 	}
 }
+
+//从mysql获取文件元信息
+func GetFileMetaDB(filesha1 string) (FileMeta, error){
+	tfile, err := mydb.GetFileMeta(filesha1)
+	if err != nil {
+		return FileMeta{}, err
+	}
+
+	fmeta := FileMeta{
+		FileSha1: tfile.FileHash,
+		//NullString类型是一个封装了string的结构体，直接可以取出string,当然更严谨的是需要判断valid值，如果为true才可以继续取值。
+		FileName: tfile.FileName.String,
+		FileSize: tfile.FileSize.Int64,
+		Location: tfile.FileAddr.String,
+	}
+
+	return fmeta, nil
+}
+
 
 //删除文件元信息
 //生产环境中我们需要做一些安全的判断，比如delete操作会不会引起线程同步的问题，如果多线程必须保证map安全
