@@ -31,7 +31,7 @@
 4. 更合理的是在文件上传保存之后，在下载那一端部署一个反向代理，然后将文件作为一个静态资源来处理，例如nginx，下载的时候后端服务会提供一个接口，用于构造下载文件的url，客户端获取url之后，就去下载，下载的时候会经过nginx，
 nginx再做一次静态资源访问将文件download下来，一些限流以及权限访问都可以在nginx做，可以减轻golang实现后端的压力。
 5. 自己觉得我们定义的文件元信息，没有给json对应序列化加上一个tag，以为golang中属性字母都是大写开头为了其他包可以访问，因此自己觉得最好在对应的字段后面加上一个json的tag
-
+6. 第4章节中，老师专门新建了一个util/resp.go中对我们返回的响应信息以结构体的形式做了封装，使得我们更够更容易的返回json数据作为响应。可以改进的点：但是如果我们可以自己改进一下老师的util/resp.go，遵循restful规范就好了，同时最好能够把用户的登录和注册页面以及用户的home.html能够使用vue就更加好了
 
 
 自己在第2章内容上可以做的：
@@ -287,6 +287,126 @@ CREATE TABLE `tbl_file` ( `id` int(11) not null auto_increment, `file_sha1` CHAR
 ### 第3章自己实践
 1. 目前批量查询还是从内存中查询，无法从数据库中读取数据，需要进一步的优化
 2. 自己有一个疑问就是为啥修改文件元信息的时候我们参数从get方法中获取，但是又要判断如果请求的方法不是post将会返回一个服务器内部错误呢？
+
+
+
+## 第4章：账号系统与鉴权
+
+互联网大部分服务需要账号鉴权才可以操作。因此我们开发一个账号系统的功能：
+1. 支持用户注册以及登录，
+2. 持久化用户会话的session或者token，用户登录之后且在session失效或者用户登出之前访问其他的api功能接口，例如上传和下载文件（这就是一个鉴权的过程）
+3. 可以进行用户数据资源隔离，每个用户之间的数据互不干扰，很多用户上传同一个文件，但是云端只存储了一份数据，但是都可以访问这个文件，并且其中一个用户的删除操作并不会影响其他用户的访问操作
+
+
+![GuzDfO](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/GuzDfO.png)用户所有的操作都会首先经过用户关口这个模块，只有经过这个授权之后才可以继续访问用户的数据
+
+
+
+本章架构图：![8URaUc](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/8URaUc.png)
+
+
+### 4-2 
+1. 建立用户表 ![FTTxiv](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/FTTxiv.png)
+2. 在db文件夹下新建一个user.go，里面新建一个函数（UserSignUp）用于处理用户注册插入到数据库的数据这个流程
+3. 在handler文件夹下新建user.go里面新建一个handler（SignupHandler）用于处理用户发送过来的请求并将其进行用户注册的整个流程
+4. 在static/view下插入signup.html(老师已经提前写好)用于展示注册页面
+5. 之后在main.go文件中映射我们刚才定义的处理用户请求对应的handler函数以及对应的请求路径。
+
+
+自己在第4章上可以做的：
+1. 注册页面中的密码显示是采用明文，![VxLTBN](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/VxLTBN.png)，我们自己可以改进一下
+2. 注册成功显示的页面：![6NoH5s](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/6NoH5s.png)
+
+
+### 4-3
+用户的登录
+原理：将用户登录输入的密码与自己设置的盐值拼接之后进行加密与我们数据库中的密码进行比对，
+
+登录的后端逻辑分为3步：
+1. 验证用户的用户名以及密码是否正确
+2. 校验密码通过之后生成一个访问的凭证，是其他API接口访问的标志。
+    两种实现：
+        1. 基于Token的验证，token生成之后发送给客户端，客户端每次请求的时候都需要token来进行验证
+        2. 基于session和cookie的方式来进行验证
+    我们在这里采用基于token的验证方式
+3. 需要返回一些登录成功的信息（比如用户信息），或者重定向到主页。我们重定向到主页
+
+
+编码步骤：
+1. 在db/user.go文件中编写验证用户名与密码的逻辑操作，如果用户名和密码正确返回true，否则返回false
+2. 在我们的handler/user.go中编写用户登录的逻辑处理步骤(按照上面写到的3个步骤)
+    2.1 用户名以及密码进行校验
+    2.2 通过之后，生成token
+        2.2.1 通过在handler/user.go中定义一个函数GenToken用来生成token，需要传入一个用户名，返回生成的token
+                生成规则(自定义)：使用md5加密字符串(用户名 拼接 时间戳 拼接 "_tokensalt" ) 拼接 时间戳的后8位。因为md5加密之后生成的是32位，我们想要40位的token字符串
+        2.2.2 生成之后，我们需要在db/user.go实现一个写token到数据库的操作。需要自己提前建立token对应的表
+                    ```sql
+                    CREATE TABLE `tbl_user_token` (
+                        `id` int(11) NOT NULL AUTO_INCREMENT,
+                      `user_name` varchar(64) NOT NULL DEFAULT '' COMMENT '用户名',
+                      `user_token` char(40) NOT NULL DEFAULT '' COMMENT '用户登录token',
+                        PRIMARY KEY (`id`),
+                      UNIQUE KEY `idx_username` (`user_name`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+                    ```
+    2.3 登录之后使得用户重定向到我们的home.html页面
+        
+        
+### 4-4 实现登录后用户信息查询
+ 
+注意：我们只有注册和登录不需要token验证，其他接口都需要token验证。
+因此我们需要在登录接口成功之后，需要将token带上给客户端或浏览器，然后将其缓存到本地，每次都可以调用
+
+所以我们首先要修改登录接口，登录成功之后，同时返回我们的token，因为返回的东西较多，所以建议使用json作为响应的body
+
+这里我们将转换json的过程封装到了util/resp.go中，已经写好了
+
+1. 修改我们的登录handler，在登录成功之后，我们返回用户一个我们自己写好的json数据，![n1vn7L](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/n1vn7L.png)
+2. 编写用户信息查询接口 UserInfoHandler()
+    2.1 解析请求参数
+    2.2 验证token是否有效，其中我们又编写了单独的一个方法用来验证token是否有效【老师课上没有写这个函数的代码 】
+        2.2.1 首先获取我们token的后8位(因为后8位我们就是截取的时间戳的后8位)，
+        2.2.2 根据我们自己设置的token有效时间(例如我们自己设置的是1天或者几天)验证是否在有效期内
+        2.2.3 如果在有效期内则去数据库中查询并验证与我们的token是否一致
+        2.2.4 最后返回一致或不一致即可
+    2.3 如果token，我们直接查询用户信息，此时我们在db/user.go文件中新建一个获取用户信息的方法GetUserInfo，
+    2.4 将查询到的用户信息使用我们的RespMsg封装作为一个json格式的数据发送给用户
+3. 去main.go中添加我们对应的路由以及处理函数
+
+为什么要编写用户信息查询函数：因为我们设置登录之后跳转到home.html页面，此时home.html加载的时候会调用请求路径/user/info查询用户的信息，所以我们要编写一个用户信息查询接口
+
+
+### 4-5 接口梳理小结
+
+用户注册接口：![y2exeg](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/y2exeg.png)
+用户登录接口：![yT9heG](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/yT9heG.png)
+用户信息查询接口：![kxNls1](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/kxNls1.png)
+
+**拦截器验证token**：
+原因：因为每个API都会校验token（除了登录和注册）。如果每个接口都校验，会造成很多代码的重复，因此我们使用拦截器(服务端接收到用户请求之后，在转发给对应的Handler之前，将请求拦截下来验证用户名以及token)验证token
+步骤：![UtuHSe](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/UtuHSe.png)
+ 
+ 
+### 4-6 访问鉴权接口的实现（拦截器）
+1. 在handler下新建一个auth.go，里面编写一个拦截器的方法
+2. 在main.go中路由处理函数前面加上拦截器 ![UQAlAj](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/UQAlAj.png)
+3. 将UserInfoHandler函数中写的验证token是否有效就可以注释掉来避免重复校验  ![86GMLx](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/86GMLx.png) 
+4. 此时我们可以尝试一下登录，发现登录之后可以跳转到主页面，同时我们试着触发异常，将浏览器的cookie清空，当前停留的页面(home.html)刷新页面出现403forbidden
+
+
+本章小结：
+1. mysql用户表的字段设计以及校验token字段的表的设计，具体token验证并没有详细讲解。
+2. 实现了用户注册、登录、用户信息查询的接口，同时编写了对应的html界面（老师直接给了代码，没有讲解）
+3. 实现了一个简单的验证token的拦截器(针对http请求，如果其他方式的请求，例如rpc需要实现其他方式的拦截器)，使用拦截器的好处：用户在访问非注册和登录的其他接口的时候都需要统一鉴权，避免了大量的代码冗余，使得代码复用性更高，性能提升。
+
+> 其实拦截器不止有验证token的作用，还有其他好处：过滤ip白名单，角色权限控制。
+
+### 第4章自己可以做的
+1. 可以自己改进一下老师的util/resp.go，遵循restful规范就好了，最后如果使用graphQL就更加美好了
+2. 同时最好能够把用户的登录和注册页面以及用户的home.html能够使用vue就更加好了
+3. 自己可以尝试使用session/cookie来进行认证,加深对安全方面的理解
+
+
 
 ## 额外阅读和补充
 1. 【推荐】自己百度到的资料：如何通过docker搭建一个mysql主从架构的集群(http://www.fall.ink/post/22)
