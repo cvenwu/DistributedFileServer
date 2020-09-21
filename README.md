@@ -618,6 +618,87 @@ hash算法的应用场景与对比（crc，md5，sha1）
 
 断点续传实现：分块上传中断一下，客户端获取上传进度，来得到自己还需要上传哪些分块（得到分块序号），得到消息后继续上传从而完成断点续传。
 
+
+
+## 第7章
+
+### 7-1 
+1. ceph是什么：一种分布式存储系统，也是redhat旗下的开源存储产品。
+2. ceph主要用于解决什么问题：为了更好的解决数据分布式存储，相对于其他存储，能够更加充分利用存储节点的计算能力，
+在存储数据的时候能够计算得到某一个数据存储的位置，从而尽量将数据分布均匀。因为自带hash算法，使得不会出现单点故障，理论上无限拓展节点和扩容。
+3. ceph的历史和现状：openstack私有云后端存储的标配。公有云用很少的代码可以实现存储，
+4. ceph的特点：
+    4.1 部署简单，可以直接用docker快速搭建，
+    4.2 可靠性高，多副本隔离存储，数据强一致性。
+    4.3 性能高：由文件系统决定
+    4.4 分布式：可扩展性强
+    4.5 客户端支持多语言接入。
+    4.6 开源
+5. ceph的体系架构：（自己具体没有做笔记）![3caqGv](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/3caqGv.png)
+
+接入ceph对象存储
+
+原有的上传都是将文件存储在上传节点的本地的，为了提高性能以及可靠性，一般需要使用分布式存储系统，使用ceph搭建私有云是一个不错的选择。
+
+### 7-2 
+ceph 基础组件
+![BgR3MR](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/BgR3MR.png)
+1. OSD（object storage , 用户数据以及对象存储的守护进程）：用于集群中所有数据与对象的存储：存储(所有用户存储数据到物理盘都会经过OSD)/复制(OSD得到一个数据的副本然后存储到另外一个地址，做成多副本)/平衡（集群规模变动，数据复制与迁移）/恢复数据（某个节点的硬盘坏了，将该节点的数据恢复到其他盘）等等，其他操作如，发心跳到监控节点，维持集群的健康
+2. Monitor：集群的监视器，负责维护集群的健康状态以及元数据，比如集群中所有节点的属性以及关系，OSD会获取映射表与数据，计算出对象最终的存储地址
+3. MDS(meta data server)：保存文件系统服务的元数据
+4. GW：提供兼容的gateway服务
+
+
+作者在本机也通过docker安装了ceph集群，![025dlH](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/025dlH.png)
+查看其中一个monitor节点的健康状态，![c1bZIb](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/c1bZIb.png)
+
+因为ceph兼容aws的s3接口
+![i6dc5m](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/i6dc5m.png)
+对于一个对象来说，数据就是就是文件中的数据，而元数据就是文件的描述信息 
+
+### 7-3 
+
+加入ceph之后的架构变化：![mIFnh3](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/mIFnh3.png)
+
+变化主要在于：存储这一块文件上传完之后，存储到服务器本地之后， 会将本地存储的文件转移到ceph集群中。之后用户下载文件的时候直接从ceph读取并下载。
+
+在本地存储没有转移到ceph之前，用户还是需要从本地访问文件并下载。
+而这个过程是同步的，也就是说用户上传文件首先会保存到本地，之后本地就会将文件转移到ceph，
+这个过程就是同步的，有个不好的地方就是这个过程需要写两次，会增加用户上传时间，所以后面章节会将这个过程转换成异步的逻辑，异步明显的好处就是用户并不会增加等待上传文件的时间，避免用户体验差
+不过异步【第9章节讲解】带来任务的复杂性，会将任务写入到队列中。
+
+EndPoint：对外暴露的微服务，存储服务的入口，web服务入口点的url
+
+
+文件写入到ceph之后，数据库表也会有一定修改，会将相关写入的存储地址写入到mysql中
+
+
+操作：
+1. 在项目目录下新建store文件夹，在store新建ceph文件夹，新建ceph_conn.go用于客户端向ceph进行连接
+            1.1 在该文件下编写一个函数用来进行ceph的连接，连接之前我们需要进行一些配置，我们使用CMD进行配置：![GUVIZX](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/GUVIZX.png)
+                执行命令之后的结果：![DXP1nO](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/DXP1nO.png)
+                之后我们就可以根据我们配置的这两个key进行上传以及下载
+            1.2 在该文件下编写一个函数用来获取指定的bucket对象
+            1.3 在项目目录下的test文件夹编写一个测试文件test_ceph.go ![PqKOq5](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/PqKOq5.png) ![VWcm2X](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/VWcm2X.png)
+                        
+### 7-4 实现ceph的文件上传下载
+
+步骤：
+1. 找到我们之前写的UploadHandler的函数，插入一段代码，在用户文件内容写入到本地存储之后，并且在更新文件表之前。在这个范围内将这个文件写入到ceph中
+
+
+自己可以做的：
+1. 老师配置好ceph之后，上传文件，传到了ceph中，![KhK6ev](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/KhK6ev.png)，老师建议学生可以在后面加上一个下载按钮并同时开发下载功能进行下载
+       1.1 ![wE9sw7](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/wE9sw7.png)
+       
+       
+### 本章小结（7-4视频后半部分讲解了）
+![VaRMw8](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/VaRMw8.png)
+
+老师建议多实践来实现功能模块加深对ceph的理解程度。对其他开源云存储也会有帮助。
+
+
+
 ## 额外阅读和补充
 1. 【推荐】自己百度到的资料：如何通过docker搭建一个mysql主从架构的集群(http://www.fall.ink/post/22)
-2. 【推荐】推荐自己去查看一下docker的命令[菜鸟教程](https://www.runoob.com/docker/docker-rm-command.html)
+2. 【推荐】推荐自己去查看一下docker的命令[菜鸟教程](https://www.runoob.com/docker/docker-rm-command.html) 
