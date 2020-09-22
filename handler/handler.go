@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	dblayer "fileSystem/db"
 	"fileSystem/meta"
-	"fileSystem/store/ceph"
+	"fileSystem/store/oss"
 	"fileSystem/util"
-	"gopkg.in/amz.v1/s3"
 	"io"
 	"io/ioutil"
 	"log"
@@ -79,20 +78,29 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		fileMeta.FileSha1 = util.FileSha1(newFile)
 		log.Println("上传文件的sha1值为-------------------->", fileMeta.FileSha1)
 
-
 		//7-4视频进行代码的改动：同时将文件写入ceph进行存储
 		newFile.Seek(0, 0)
 		//读取全部文件内容
-		data, _ := ioutil.ReadAll(newFile)
+		//data, _ := ioutil.ReadAll(newFile)
 		//获取指定的桶(我们自己提前创建好桶了)
-		bucket := ceph.GetCephBucket("userfile")
-		//写入到ceph的路径，加上文件的sha1保证唯一性
-		cephPath := "/ceph/" + fileMeta.FileSha1
-		//第1个参数为存放的路径，第2个参数是存放什么数据，第3个参数是数据存放的类型(我们使用octet-stream表明是二进制的数据)，第4个是权限，生产环境中需要设置成私有来让用户进行认证
-		_ = bucket.Put(cephPath, data, "octet-stream", s3.PublicRead)
-		//将文件元信息存储的路径修改为ceph存储的路径
-		fileMeta.Location = cephPath
+		//bucket := ceph.GetCephBucket("userfile")
+		////写入到ceph的路径，加上文件的sha1保证唯一性
+		//cephPath := "/ceph/" + fileMeta.FileSha1
+		////第1个参数为存放的路径，第2个参数是存放什么数据，第3个参数是数据存放的类型(我们使用octet-stream表明是二进制的数据)，第4个是权限，生产环境中需要设置成私有来让用户进行认证
+		//_ = bucket.Put(cephPath, data, "octet-stream", s3.PublicRead)
+		////将文件元信息存储的路径修改为ceph存储的路径
+		//fileMeta.Location = cephPath
 
+		//将文件写入到oss里面
+		ossPath := "oss/" + fileMeta.FileSha1
+		//会将newFile上传到oss中的ossPath路径
+		err = oss.Bucket().PutObject(ossPath, newFile)
+		if err != nil {
+			log.Println("上传到OSS失败------------------->", err.Error())
+			w.Write([]byte("Upload failed!"))
+			return
+		}
+		fileMeta.Location = ossPath
 
 		//meta.UpdateFileMeta(fileMeta)
 		meta.UpdateFileMetaDB(fileMeta)
@@ -323,4 +331,21 @@ func TryFastUploadHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write(resp.JSONBytes())
 		return
 	}
+}
+
+
+//生成oss文件的下载地址
+func DownloadURLHandler(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+
+	filehash := r.Form.Get("filehash")
+
+	//TODO: 自己判断一下文件是存在ceph还是oss
+
+	//从文件表查记录
+	row, _ := dblayer.GetFileMeta(filehash)
+	signedURL := oss.DownloadURL(row.FileAddr)
+
+
+	w.Write([]byte(signedURL))
 }

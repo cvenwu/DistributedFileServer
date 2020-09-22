@@ -698,6 +698,61 @@ EndPoint：对外暴露的微服务，存储服务的入口，web服务入口点
 老师建议多实践来实现功能模块加深对ceph的理解程度。对其他开源云存储也会有帮助。
 
 
+## 第8章节
+
+### 8-1 阿里云OSS简介
+
+公有云存储开发服务
+
+选OSS上公有云的原因：
+1. 阿里云OSS成熟稳定，且OSS是对象存储，会将我们存的数据当做对象，底层会帮助我们切分，存储。并且我们只需要会用接口就可以了，不用担心如何搭建OSS集群，负载均衡等
+
+
+### 8-2 阿里云OSS的特点
+![b7jaQT](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/b7jaQT.png)
+
+### 8-3 阿里云OSS相关术语
+OSS相关术语：![rCoeIi](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/rCoeIi.png)
+
+存储空间：用来存储数据的一种容器。所有的对象必须属于某一个Bucket，可以设置和修改存储空间的属性来控制访问权限还有生命周期。bucket的设置对Bucket中的所有内容都是生效的。
+
+### 8-4 阿里云OSS控制台管理
+
+### 8-5 阿里云OSS上传文件
+
+步骤
+1. 项目目录下新建一个文件夹config，创建一个oss.go专门用于存储oss的配置信息，并填写相应的配置信息
+2. 在store目录下新建oss文件夹，同时在oss下新建一个oss_conn.go文件，主要用于获取oss的客户端，以及对应的桶之后用于存储文件
+修改handler中的上传文件内容，将我们之前写的上传到ceph注释掉。 修改为如图所示的代码：![ctBh4a](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/ctBh4a.png)
+
+### 8-6 阿里云OSS下载文件
+对bucket中的object通过oss签名进行临时授权之后进行下载。
+
+1. 在oss_conn.go中编写函数DownloadURL
+2. 改造外面的接口：在handler.go新建一个函数返回一个文件的下载地址，避免了还得将文件拷贝到我们的上传节点服务器，而是直接从oss下载。
+    自己后面可以做一下：	//TODO: 自己判断一下文件是存在ceph还是oss
+3. 在main.go中加上一个路由规则
+4. ![xp6kBY](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/xp6kBY.png)
+
+### 8-7 阿里云OSS其他功能
+
+1. 创建公共读bucket：将静态文件例如js或者图片文件。不是敏感的文件可以放。
+2. 对象生命周期的管理：放一些临时的数据，没必要持续保存这个文件，设置一个周期来删除这些文件。![Gl9oO3](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/Gl9oO3.png)
+3. 客户端直传阿里oss：不用经过我们的服务器，不需要将文件存储在我们本地。![Kh9g7y](https://cdn.jsdelivr.net/gh/sivanWu0222/ImageHosting@master/uPic/Kh9g7y.png)
+
+
+### 8-8 阿里云OSS小结
+1. OSS的简单介绍(特点/术语)
+2. OSS文档学习(API/SDK)
+3. OSS控制台管理
+4. 使用Go实现访问OSS（上传/下载/其他）：以及其他几个常见场景：对象生命周期管理，安全级别，bucket级别以及客户端如何直接将文件传输到OSS并让服务器只做一个简单的调度（直传），自己课后时间一下如何直传。
+
+
+
+ 
+
+
+
 
 ## 额外阅读和补充
 1. 【推荐】自己百度到的资料：如何通过docker搭建一个mysql主从架构的集群(http://www.fall.ink/post/22)
